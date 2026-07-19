@@ -59,6 +59,9 @@ import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
 import com.darren.anitrackpulse.network.RecommendedAnime
 import com.darren.anitrackpulse.network.RelatedAnime
+import com.darren.anitrackpulse.network.SearchFormat
+import com.darren.anitrackpulse.network.SearchSort
+import com.darren.anitrackpulse.network.SearchStatusFilter
 import com.darren.anitrackpulse.ui.AniTrackUiState
 import com.darren.anitrackpulse.ui.AniTrackViewModel
 import com.darren.anitrackpulse.ui.theme.AniTrackPulseTheme
@@ -90,7 +93,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class ScreenDestination(val label: String) { WATCHLIST("Watchlist"), SEARCH("Search"), CALENDAR("Calendar"), SETTINGS("Settings") }
+enum class ScreenDestination(val label: String) { WATCHLIST("Watchlist"), SEARCH("Search"), CALENDAR("Calendar"), STATS("Stats"), SETTINGS("Settings") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,7 +136,7 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
         },
         bottomBar = {
             NavigationBar(modifier = Modifier.navigationBarsPadding()) {
-                listOf(ScreenDestination.WATCHLIST to Icons.Default.Star, ScreenDestination.SEARCH to Icons.Default.Search, ScreenDestination.CALENDAR to Icons.Default.CalendarMonth).forEach { (screen, icon) ->
+                listOf(ScreenDestination.WATCHLIST to Icons.Default.Star, ScreenDestination.SEARCH to Icons.Default.Search, ScreenDestination.CALENDAR to Icons.Default.CalendarMonth, ScreenDestination.STATS to Icons.Default.Insights).forEach { (screen, icon) ->
                     NavigationBarItem(selected = !inDetails && currentScreen == screen, onClick = { detailStack.clear(); vm.clearDetails(); currentScreen = screen }, icon = { Icon(icon, screen.label) }, label = { Text(screen.label, fontSize = 11.sp) })
                 }
             }
@@ -154,6 +157,7 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
                         ScreenDestination.WATCHLIST -> WatchlistScreen(uiState, vm, openDetails)
                         ScreenDestination.SEARCH -> SearchScreen(uiState, vm, openDetails) { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
                         ScreenDestination.CALENDAR -> CalendarScreen(uiState, vm)
+                        ScreenDestination.STATS -> StatsScreen(uiState)
                         ScreenDestination.SETTINGS -> SettingsScreen(uiState, vm)
                     }
                 }
@@ -254,6 +258,10 @@ fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetai
 fun SearchScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetails: (Int) -> Unit, onAddedMessage: (String) -> Unit) {
     val savedIds = remember(uiState.savedAnime) { uiState.savedAnime.map { it.id }.toSet() }
     val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) { vm.loadSeasonal() }
+    val onAdd: (AnimeSearchResult, AnimeStatus) -> Unit = { result, status ->
+        vm.addAnime(result, status); onAddedMessage("Added to ${status.displayName()}")
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
@@ -275,23 +283,121 @@ fun SearchScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetails:
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); vm.search() })
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
+        SearchFilterRow(uiState, vm)
+        Spacer(Modifier.height(12.dp))
         when {
             uiState.isSearching && uiState.searchResults.isEmpty() ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             uiState.searchQuery.isBlank() ->
-                EmptyPanel("Discover anime", "Type part of a title to search AniList. Results update as you type.")
+                SeasonalDiscovery(uiState, savedIds, onOpenDetails, onAdd)
             uiState.searchResults.isEmpty() ->
-                EmptyPanel("No matches", "Nothing found for \"${uiState.searchQuery.trim()}\". Try a different title.")
+                EmptyPanel("No matches", "Nothing found for \"${uiState.searchQuery.trim()}\". Try a different title or adjust filters.")
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                 items(uiState.searchResults, key = { it.id }) { result ->
                     SearchResultCard(
                         result = result,
                         alreadyAdded = savedIds.contains(result.id),
                         onOpenDetails = { onOpenDetails(result.id) },
-                        onAdd = { status -> vm.addAnime(result, status); onAddedMessage("Added to ${status.displayName()}") }
+                        onAdd = { status -> onAdd(result, status) }
                     )
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SearchFilterRow(uiState: AniTrackUiState, vm: AniTrackViewModel) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            FilterDropdownChip(
+                label = "Format",
+                selectedLabel = uiState.searchFormat.label,
+                options = SearchFormat.entries.map { it.label to it },
+                isActive = uiState.searchFormat != SearchFormat.ANY,
+                onSelect = vm::setSearchFormat
+            )
+        }
+        item {
+            FilterDropdownChip(
+                label = "Status",
+                selectedLabel = uiState.searchStatus.label,
+                options = SearchStatusFilter.entries.map { it.label to it },
+                isActive = uiState.searchStatus != SearchStatusFilter.ANY,
+                onSelect = vm::setSearchStatus
+            )
+        }
+        item {
+            FilterDropdownChip(
+                label = "Sort",
+                selectedLabel = uiState.searchSort.label,
+                options = SearchSort.entries.map { it.label to it },
+                isActive = true,
+                onSelect = vm::setSearchSort
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun <T> FilterDropdownChip(
+    label: String,
+    selectedLabel: String,
+    options: List<Pair<String, T>>,
+    isActive: Boolean,
+    onSelect: (T) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        FilterChip(
+            selected = isActive,
+            onClick = { expanded = true },
+            label = { Text("$label: $selectedLabel") },
+            trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp)) }
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (optionLabel, value) ->
+                DropdownMenuItem(text = { Text(optionLabel) }, onClick = { expanded = false; onSelect(value) })
+            }
+        }
+    }
+}
+
+@Composable
+fun SeasonalDiscovery(
+    uiState: AniTrackUiState,
+    savedIds: Set<Int>,
+    onOpenDetails: (Int) -> Unit,
+    onAdd: (AnimeSearchResult, AnimeStatus) -> Unit
+) {
+    when {
+        uiState.isSeasonalLoading && uiState.seasonalResults.isEmpty() ->
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        uiState.seasonalResults.isEmpty() ->
+            EmptyPanel("Discover anime", "Type part of a title to search AniList, or check back for this season's popular titles.")
+        else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+            item {
+                Column {
+                    Text(
+                        "Popular this season",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    if (uiState.seasonLabel.isNotBlank()) {
+                        Text(uiState.seasonLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+            items(uiState.seasonalResults, key = { it.id }) { result ->
+                SearchResultCard(
+                    result = result,
+                    alreadyAdded = savedIds.contains(result.id),
+                    onOpenDetails = { onOpenDetails(result.id) },
+                    onAdd = { status -> onAdd(result, status) }
+                )
             }
         }
     }
@@ -341,6 +447,91 @@ fun CalendarScreen(uiState: AniTrackUiState, vm: AniTrackViewModel) {
                     }
                 }
             }
+        }
+    }
+}
+
+data class WatchStats(
+    val totalAnime: Int,
+    val episodesWatched: Int,
+    val hoursWatched: Int,
+    val perStatus: List<Pair<AnimeStatus, Int>>,
+    val completionRate: Int?,
+    val ratedCount: Int
+)
+
+private const val MINUTES_PER_EPISODE = 24
+
+fun computeWatchStats(entries: List<AnimeEntry>): WatchStats {
+    val totalAnime = entries.size
+    val episodesWatched = entries.sumOf { it.watchedEpisodes }
+    val hoursWatched = episodesWatched * MINUTES_PER_EPISODE / 60
+    val perStatus = AnimeStatus.entries.map { status -> status to entries.count { it.status == status } }
+    val withTotals = entries.filter { it.totalEpisodes != null }
+    val completed = withTotals.count { it.watchedEpisodes >= (it.totalEpisodes ?: 0) }
+    val completionRate = if (withTotals.isEmpty()) null else completed * 100 / withTotals.size
+    return WatchStats(totalAnime, episodesWatched, hoursWatched, perStatus, completionRate, withTotals.size)
+}
+
+@Composable
+fun StatsScreen(uiState: AniTrackUiState) {
+    val stats = remember(uiState.savedAnime) { computeWatchStats(uiState.savedAnime) }
+    if (uiState.savedAnime.isEmpty()) {
+        EmptyPanel("No stats yet", "Save some anime to your watchlist to see your viewing stats.")
+        return
+    }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Your stats", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatTile(Modifier.weight(1f), "${stats.totalAnime}", "Anime tracked", Icons.Default.Star)
+            StatTile(Modifier.weight(1f), "${stats.episodesWatched}", "Episodes watched", Icons.Default.PlayArrow)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StatTile(Modifier.weight(1f), "${stats.hoursWatched}h", "Hours watched", Icons.Default.Schedule)
+            StatTile(
+                Modifier.weight(1f),
+                stats.completionRate?.let { "$it%" } ?: "—",
+                "Completion rate",
+                Icons.Default.CheckCircle
+            )
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("By folder", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                stats.perStatus.forEach { (status, count) ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(status.displayName(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("$count", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+        if (stats.completionRate != null) {
+            Text(
+                "Completion rate is based on ${stats.ratedCount} anime with a known episode count. Hours assume ${MINUTES_PER_EPISODE} minutes per episode.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                "Add anime with known episode counts to see a completion rate. Hours assume ${MINUTES_PER_EPISODE} minutes per episode.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun StatTile(modifier: Modifier, value: String, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Card(modifier) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+            Text(value, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -541,20 +732,28 @@ fun AnimeDetailsContent(
             }
 
             if (details.relations.isNotEmpty()) {
-                Text("Related", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SectionHeader("Related", details.relations.size)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = 4.dp)) {
                     items(details.relations, key = { it.id }) { rel -> RelatedCard(rel) { onOpenAnime(rel.id) } }
                 }
             }
 
             if (details.recommendations.isNotEmpty()) {
-                Text("Recommended", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SectionHeader("Recommended", details.recommendations.size)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = 4.dp)) {
                     items(details.recommendations, key = { it.id }) { rec -> RecommendationCard(rec) { onOpenAnime(rec.id) } }
                 }
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+@Composable
+fun SectionHeader(title: String, count: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+        Text("$count", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

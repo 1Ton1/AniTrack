@@ -11,7 +11,12 @@ import com.darren.anitrackpulse.data.SettingsRepository
 import com.darren.anitrackpulse.network.AniListApi
 import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
+import com.darren.anitrackpulse.network.AnimeSeason
+import com.darren.anitrackpulse.network.SearchFormat
+import com.darren.anitrackpulse.network.SearchSort
+import com.darren.anitrackpulse.network.SearchStatusFilter
 import com.darren.anitrackpulse.repo.AnimeRepository
+import java.time.LocalDate
 import com.darren.anitrackpulse.sendReleaseSystemNotification
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -32,6 +37,12 @@ data class AniTrackUiState(
     val savedAnime: List<AnimeEntry> = emptyList(),
     val searchQuery: String = "",
     val searchResults: List<AnimeSearchResult> = emptyList(),
+    val searchFormat: SearchFormat = SearchFormat.ANY,
+    val searchStatus: SearchStatusFilter = SearchStatusFilter.ANY,
+    val searchSort: SearchSort = SearchSort.POPULARITY,
+    val seasonalResults: List<AnimeSearchResult> = emptyList(),
+    val isSeasonalLoading: Boolean = false,
+    val seasonLabel: String = "",
     val selectedStatus: AnimeStatus = AnimeStatus.WATCHING,
     val isSearching: Boolean = false,
     val isRefreshing: Boolean = false,
@@ -89,9 +100,60 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
     private suspend fun runSearch() {
         _uiState.value = _uiState.value.copy(isSearching = true)
         try {
-            _uiState.value = _uiState.value.copy(searchResults = repo.searchAnime(_uiState.value.searchQuery))
+            val state = _uiState.value
+            _uiState.value = _uiState.value.copy(
+                searchResults = repo.searchAnime(
+                    state.searchQuery,
+                    state.searchFormat,
+                    state.searchStatus,
+                    state.searchSort
+                )
+            )
         } finally {
             _uiState.value = _uiState.value.copy(isSearching = false)
+        }
+    }
+
+    private fun rerunSearchIfActive() {
+        if (_uiState.value.searchQuery.isBlank()) return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { runSearch() }
+    }
+
+    fun setSearchFormat(format: SearchFormat) {
+        if (_uiState.value.searchFormat == format) return
+        _uiState.value = _uiState.value.copy(searchFormat = format)
+        rerunSearchIfActive()
+    }
+
+    fun setSearchStatus(status: SearchStatusFilter) {
+        if (_uiState.value.searchStatus == status) return
+        _uiState.value = _uiState.value.copy(searchStatus = status)
+        rerunSearchIfActive()
+    }
+
+    fun setSearchSort(sort: SearchSort) {
+        if (_uiState.value.searchSort == sort) return
+        _uiState.value = _uiState.value.copy(searchSort = sort)
+        rerunSearchIfActive()
+    }
+
+    fun loadSeasonal() {
+        if (_uiState.value.isSeasonalLoading || _uiState.value.seasonalResults.isNotEmpty()) return
+        val today = LocalDate.now()
+        val season = AnimeSeason.fromMonth(today.monthValue)
+        val year = today.year
+        _uiState.value = _uiState.value.copy(
+            isSeasonalLoading = true,
+            seasonLabel = "${season.label} $year"
+        )
+        viewModelScope.launch {
+            try {
+                val results = repo.getSeasonalPopular(season, year)
+                _uiState.value = _uiState.value.copy(seasonalResults = results, isSeasonalLoading = false)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isSeasonalLoading = false)
+            }
         }
     }
 

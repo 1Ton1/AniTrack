@@ -6,6 +6,10 @@ import com.darren.anitrackpulse.data.AnimeStatus
 import com.darren.anitrackpulse.network.AniListApi
 import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
+import com.darren.anitrackpulse.network.AnimeSeason
+import com.darren.anitrackpulse.network.SearchFormat
+import com.darren.anitrackpulse.network.SearchSort
+import com.darren.anitrackpulse.network.SearchStatusFilter
 import kotlinx.coroutines.flow.Flow
 
 class AnimeRepository(
@@ -14,8 +18,16 @@ class AnimeRepository(
 ) {
     fun observeSavedAnime(): Flow<List<AnimeEntry>> = dao.observeAll()
 
-    suspend fun searchAnime(query: String): List<AnimeSearchResult> =
-        if (query.isBlank()) emptyList() else api.searchAnime(query.trim())
+    suspend fun searchAnime(
+        query: String,
+        format: SearchFormat = SearchFormat.ANY,
+        status: SearchStatusFilter = SearchStatusFilter.ANY,
+        sort: SearchSort = SearchSort.POPULARITY
+    ): List<AnimeSearchResult> =
+        if (query.isBlank()) emptyList() else api.searchAnime(query.trim(), format, status, sort)
+
+    suspend fun getSeasonalPopular(season: AnimeSeason, seasonYear: Int): List<AnimeSearchResult> =
+        api.getSeasonalPopular(season, seasonYear)
 
     suspend fun getAnimeDetails(id: Int): AnimeDetails? = api.getAnimeDetails(id)
 

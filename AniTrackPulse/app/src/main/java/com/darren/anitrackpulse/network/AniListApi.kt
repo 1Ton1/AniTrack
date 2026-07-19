@@ -2,6 +2,7 @@ package com.darren.anitrackpulse.network
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -10,12 +11,17 @@ class AniListApi {
 
     private val endpoint = "https://graphql.anilist.co"
 
-    suspend fun searchAnime(query: String): List<AnimeSearchResult> = withContext(Dispatchers.IO) {
+    suspend fun searchAnime(
+        query: String,
+        format: SearchFormat = SearchFormat.ANY,
+        status: SearchStatusFilter = SearchStatusFilter.ANY,
+        sort: SearchSort = SearchSort.POPULARITY
+    ): List<AnimeSearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
         val gql = """
-            query(${'$'}search: String) {
+            query(${'$'}search: String, ${'$'}format: MediaFormat, ${'$'}status: MediaStatus, ${'$'}sort: [MediaSort]) {
               Page(page: 1, perPage: 25) {
-                media(search: ${'$'}search, type: ANIME, sort: SEARCH_MATCH) {
+                media(search: ${'$'}search, type: ANIME, format: ${'$'}format, status: ${'$'}status, sort: ${'$'}sort) {
                   id
                   title { romaji english }
                   episodes
@@ -26,10 +32,38 @@ class AniListApi {
               }
             }
         """.trimIndent()
-        val variables = JSONObject().put("search", query)
-        val data = runQuery(gql, variables) ?: return@withContext emptyList()
-        val mediaArray = data.optJSONObject("Page")?.optJSONArray("media") ?: return@withContext emptyList()
-        (0 until mediaArray.length()).mapNotNull { i ->
+        val variables = JSONObject()
+            .put("search", query)
+            .put("sort", JSONArray().put(sort.apiValue))
+        format.apiValue?.let { variables.put("format", it) }
+        status.apiValue?.let { variables.put("status", it) }
+        parseMediaPage(runQuery(gql, variables))
+    }
+
+    suspend fun getSeasonalPopular(season: AnimeSeason, seasonYear: Int): List<AnimeSearchResult> = withContext(Dispatchers.IO) {
+        val gql = """
+            query(${'$'}season: MediaSeason, ${'$'}seasonYear: Int) {
+              Page(page: 1, perPage: 25) {
+                media(season: ${'$'}season, seasonYear: ${'$'}seasonYear, type: ANIME, sort: POPULARITY_DESC) {
+                  id
+                  title { romaji english }
+                  episodes
+                  status
+                  coverImage { large }
+                  nextAiringEpisode { episode airingAt }
+                }
+              }
+            }
+        """.trimIndent()
+        val variables = JSONObject()
+            .put("season", season.apiValue)
+            .put("seasonYear", seasonYear)
+        parseMediaPage(runQuery(gql, variables))
+    }
+
+    private fun parseMediaPage(data: JSONObject?): List<AnimeSearchResult> {
+        val mediaArray = data?.optJSONObject("Page")?.optJSONArray("media") ?: return emptyList()
+        return (0 until mediaArray.length()).mapNotNull { i ->
             mediaArray.optJSONObject(i)?.let { parseSearchResult(it) }
         }
     }
