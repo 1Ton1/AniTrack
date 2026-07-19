@@ -334,7 +334,7 @@ fun SearchFilterRow(uiState: AniTrackUiState, vm: AniTrackViewModel) {
                 label = "Sort",
                 selectedLabel = uiState.searchSort.label,
                 options = SearchSort.entries.map { it.label to it },
-                isActive = true,
+                isActive = uiState.searchSort != SearchSort.RELEVANCE,
                 onSelect = vm::setSearchSort
             )
         }

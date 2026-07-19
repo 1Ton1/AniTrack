@@ -39,7 +39,7 @@ data class AniTrackUiState(
     val searchResults: List<AnimeSearchResult> = emptyList(),
     val searchFormat: SearchFormat = SearchFormat.ANY,
     val searchStatus: SearchStatusFilter = SearchStatusFilter.ANY,
-    val searchSort: SearchSort = SearchSort.POPULARITY,
+    val searchSort: SearchSort = SearchSort.RELEVANCE,
     val seasonalResults: List<AnimeSearchResult> = emptyList(),
     val isSeasonalLoading: Boolean = false,
     val seasonLabel: String = "",

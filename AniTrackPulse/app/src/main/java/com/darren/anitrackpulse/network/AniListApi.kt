@@ -15,7 +15,7 @@ class AniListApi {
         query: String,
         format: SearchFormat = SearchFormat.ANY,
         status: SearchStatusFilter = SearchStatusFilter.ANY,
-        sort: SearchSort = SearchSort.POPULARITY
+        sort: SearchSort = SearchSort.RELEVANCE
     ): List<AnimeSearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
         val gql = """

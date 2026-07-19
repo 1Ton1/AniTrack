@@ -22,7 +22,7 @@ class AnimeRepository(
         query: String,
         format: SearchFormat = SearchFormat.ANY,
         status: SearchStatusFilter = SearchStatusFilter.ANY,
-        sort: SearchSort = SearchSort.POPULARITY
+        sort: SearchSort = SearchSort.RELEVANCE
     ): List<AnimeSearchResult> =
         if (query.isBlank()) emptyList() else api.searchAnime(query.trim(), format, status, sort)
 

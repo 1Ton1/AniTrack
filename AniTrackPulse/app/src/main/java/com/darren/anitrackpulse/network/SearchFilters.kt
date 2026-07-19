@@ -17,8 +17,9 @@ enum class SearchStatusFilter(val label: String, val apiValue: String?) {
     NOT_YET_RELEASED("Not Yet Aired", "NOT_YET_RELEASED")
 }
 
-/** AniList MediaSort options exposed in the search UI. */
+/** AniList MediaSort options exposed in the search UI. RELEVANCE (AniList's SEARCH_MATCH) is the default so typing a specific title still surfaces the best text match first, rather than the globally most popular title. */
 enum class SearchSort(val label: String, val apiValue: String) {
+    RELEVANCE("Relevance", "SEARCH_MATCH"),
     POPULARITY("Popularity", "POPULARITY_DESC"),
     SCORE("Score", "SCORE_DESC"),
     TRENDING("Trending", "TRENDING_DESC")
