@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -19,8 +20,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,9 +35,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,11 +50,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.darren.anitrackpulse.data.AnimeEntry
 import com.darren.anitrackpulse.data.AnimeStatus
+import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
+import com.darren.anitrackpulse.network.RecommendedAnime
+import com.darren.anitrackpulse.network.RelatedAnime
 import com.darren.anitrackpulse.ui.AniTrackUiState
 import com.darren.anitrackpulse.ui.AniTrackViewModel
 import com.darren.anitrackpulse.ui.theme.AniTrackPulseTheme
 import kotlinx.coroutines.launch
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -80,17 +93,33 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
     var currentScreen by rememberSaveable { mutableStateOf(ScreenDestination.WATCHLIST) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val detailStack = remember { mutableStateListOf<Int>() }
+    val currentDetailId = detailStack.lastOrNull()
+    val inDetails = currentDetailId != null
+
+    val openDetails: (Int) -> Unit = { id -> detailStack.add(id) }
+    val popDetails: () -> Unit = {
+        if (detailStack.isNotEmpty()) detailStack.removeAt(detailStack.lastIndex)
+        if (detailStack.isEmpty()) vm.clearDetails()
+    }
+
+    LaunchedEffect(currentDetailId) { currentDetailId?.let { vm.loadDetails(it) } }
+    BackHandler(enabled = inDetails) { popDetails() }
 
     Scaffold(
         topBar = {
             var menuExpanded by remember { mutableStateOf(false) }
             TopAppBar(
-                title = { Text("AniTrackPulse", fontWeight = FontWeight.Bold) },
+                title = { Text(if (inDetails) "Details" else "AniTrackPulse", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    Box {
-                        IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Default.Menu, contentDescription = "Menu") }
-                        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                            DropdownMenuItem(text = { Text("Settings") }, onClick = { menuExpanded = false; currentScreen = ScreenDestination.SETTINGS })
+                    if (inDetails) {
+                        IconButton(onClick = popDetails) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    } else {
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Default.Menu, contentDescription = "Menu") }
+                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                DropdownMenuItem(text = { Text("Settings") }, onClick = { menuExpanded = false; currentScreen = ScreenDestination.SETTINGS })
+                            }
                         }
                     }
                 },
@@ -100,19 +129,28 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
         bottomBar = {
             NavigationBar(modifier = Modifier.navigationBarsPadding()) {
                 listOf(ScreenDestination.WATCHLIST to Icons.Default.Star, ScreenDestination.SEARCH to Icons.Default.Search, ScreenDestination.CALENDAR to Icons.Default.CalendarMonth).forEach { (screen, icon) ->
-                    NavigationBarItem(selected = currentScreen == screen, onClick = { currentScreen = screen }, icon = { Icon(icon, screen.label) }, label = { Text(screen.label, fontSize = 11.sp) })
+                    NavigationBarItem(selected = !inDetails && currentScreen == screen, onClick = { detailStack.clear(); vm.clearDetails(); currentScreen = screen }, icon = { Icon(icon, screen.label) }, label = { Text(screen.label, fontSize = 11.sp) })
                 }
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            AnimatedContent(targetState = currentScreen, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "screen") { screen ->
-                when (screen) {
-                    ScreenDestination.WATCHLIST -> WatchlistScreen(uiState, vm)
-                    ScreenDestination.SEARCH -> SearchScreen(uiState, vm) { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
-                    ScreenDestination.CALENDAR -> CalendarScreen(uiState, vm)
-                    ScreenDestination.SETTINGS -> SettingsScreen(uiState, vm)
+            if (inDetails) {
+                AnimeDetailsScreen(
+                    uiState = uiState,
+                    onOpenAnime = openDetails,
+                    onRetry = { currentDetailId?.let { vm.loadDetails(it) } },
+                    onAdd = { result, status -> vm.addAnime(result, status); scope.launch { snackbarHostState.showSnackbar("Added to ${status.displayName()}") } }
+                )
+            } else {
+                AnimatedContent(targetState = currentScreen, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "screen") { screen ->
+                    when (screen) {
+                        ScreenDestination.WATCHLIST -> WatchlistScreen(uiState, vm, openDetails)
+                        ScreenDestination.SEARCH -> SearchScreen(uiState, vm, openDetails) { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } }
+                        ScreenDestination.CALENDAR -> CalendarScreen(uiState, vm)
+                        ScreenDestination.SETTINGS -> SettingsScreen(uiState, vm)
+                    }
                 }
             }
             if (uiState.isNotificationPanelOpen) NotificationPanel(uiState, vm)
@@ -171,7 +209,7 @@ fun NotificationPanel(uiState: AniTrackUiState, vm: AniTrackViewModel) {
 }
 
 @Composable
-fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel) {
+fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetails: (Int) -> Unit) {
     val filtered = uiState.savedAnime.filter { it.status == uiState.selectedStatus }
     val listState = rememberLazyListState()
     LaunchedEffect(uiState.focusedAnimeId, filtered) {
@@ -197,26 +235,55 @@ fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel) {
         if (filtered.isEmpty()) EmptyPanel("No anime here yet", "Search for anime and save them to ${uiState.selectedStatus.displayName().lowercase()}.")
         else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(filtered, key = { it.id }) { entry ->
-                AnimeCard(entry, { newCount -> vm.updateWatchedEpisodes(entry.id.toLong(), newCount) }, { vm.deleteAnime(entry) }, { vm.moveAnime(entry.id.toLong(), it) }, { vm.refreshAnime(entry.id.toLong()) })
+                AnimeCard(entry, { newCount -> vm.updateWatchedEpisodes(entry.id.toLong(), newCount) }, { vm.deleteAnime(entry) }, { vm.moveAnime(entry.id.toLong(), it) }, { vm.refreshAnime(entry.id.toLong()) }, { onOpenDetails(entry.id) })
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-fun SearchScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onAddedMessage: (String) -> Unit) {
+fun SearchScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetails: (Int) -> Unit, onAddedMessage: (String) -> Unit) {
     val savedIds = remember(uiState.savedAnime) { uiState.savedAnime.map { it.id }.toSet() }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        OutlinedTextField(value = uiState.searchQuery, onValueChange = vm::updateSearchQuery, label = { Text("Search anime") }, modifier = Modifier.fillMaxWidth(), singleLine = true, trailingIcon = {
-            IconButton(onClick = vm::search) {
-                if (uiState.isSearching) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.4.dp) else Icon(Icons.Default.Search, contentDescription = "Search")
-            }
-        })
-        Spacer(Modifier.height(14.dp))
-        if (uiState.searchResults.isEmpty()) EmptyPanel("Search results appear here", "Type part of a title and matching anime will show automatically.")
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(uiState.searchResults, key = { it.id }) { result ->
-                SearchResultCard(result, savedIds.contains(result.id)) { status -> vm.addAnime(result, status); onAddedMessage("Added to ${status.displayName()}") }
+    val keyboard = LocalSoftwareKeyboardController.current
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = uiState.searchQuery,
+            onValueChange = vm::updateSearchQuery,
+            label = { Text("Search anime") },
+            placeholder = { Text("e.g. Frieren, One Piece") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(16.dp),
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = {
+                if (uiState.isSearching) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.4.dp)
+                } else if (uiState.searchQuery.isNotEmpty()) {
+                    IconButton(onClick = vm::clearSearch) { Icon(Icons.Default.Close, contentDescription = "Clear") }
+                }
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); vm.search() })
+        )
+        Spacer(Modifier.height(16.dp))
+        when {
+            uiState.isSearching && uiState.searchResults.isEmpty() ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            uiState.searchQuery.isBlank() ->
+                EmptyPanel("Discover anime", "Type part of a title to search AniList. Results update as you type.")
+            uiState.searchResults.isEmpty() ->
+                EmptyPanel("No matches", "Nothing found for \"${uiState.searchQuery.trim()}\". Try a different title.")
+            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+                items(uiState.searchResults, key = { it.id }) { result ->
+                    SearchResultCard(
+                        result = result,
+                        alreadyAdded = savedIds.contains(result.id),
+                        onOpenDetails = { onOpenDetails(result.id) },
+                        onAdd = { status -> vm.addAnime(result, status); onAddedMessage("Added to ${status.displayName()}") }
+                    )
+                }
             }
         }
     }
@@ -243,16 +310,25 @@ fun CalendarScreen(uiState: AniTrackUiState, vm: AniTrackViewModel) {
         }
         Spacer(Modifier.height(12.dp))
         if (upcoming.isEmpty()) EmptyPanel("No releases for ${selectedDayTitle(selectedDay, today)}", "Saved anime airing on this day will appear here.")
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
             items(upcoming, key = { it.id }) { entry ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         PosterImage(entry.coverImage)
-                        Column(Modifier.weight(1f)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(entry.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Episode ${entry.nextEpisode ?: "?"}", color = MaterialTheme.colorScheme.primary)
-                            Text(formatAiring(entry.nextAiringAt), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Folder: ${entry.status.displayName()}", style = MaterialTheme.typography.labelMedium)
+                            AssistChip(
+                                onClick = {},
+                                enabled = false,
+                                label = { Text("Episode ${entry.nextEpisode ?: "?"}") },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    disabledLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                            Text(airingCountdown(entry.nextAiringAt), fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                            Text(formatAiring(entry.nextAiringAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Folder: ${entry.status.displayName()}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -286,9 +362,9 @@ fun SettingsScreen(uiState: AniTrackUiState, vm: AniTrackViewModel) {
 }
 
 @Composable
-fun SearchResultCard(result: AnimeSearchResult, alreadyAdded: Boolean, onAdd: (AnimeStatus) -> Unit) {
+fun SearchResultCard(result: AnimeSearchResult, alreadyAdded: Boolean, onOpenDetails: () -> Unit, onAdd: (AnimeStatus) -> Unit) {
     var menuExpanded by remember { mutableStateOf(false) }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenDetails)) {
         Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
             PosterImage(result.coverImage)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -312,12 +388,12 @@ fun SearchResultCard(result: AnimeSearchResult, alreadyAdded: Boolean, onAdd: (A
 }
 
 @Composable
-fun AnimeCard(entry: AnimeEntry, onIncrementCapped: (Int) -> Unit, onDelete: () -> Unit, onMove: (AnimeStatus) -> Unit, onRefresh: () -> Unit) {
+fun AnimeCard(entry: AnimeEntry, onIncrementCapped: (Int) -> Unit, onDelete: () -> Unit, onMove: (AnimeStatus) -> Unit, onRefresh: () -> Unit, onOpenDetails: () -> Unit) {
     val maxEpisodes = entry.totalEpisodes ?: Int.MAX_VALUE
     val canIncrease = entry.watchedEpisodes < maxEpisodes
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth().clickable(onClick = onOpenDetails), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PosterImage(entry.coverImage)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(entry.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -342,6 +418,136 @@ fun AnimeCard(entry: AnimeEntry, onIncrementCapped: (Int) -> Unit, onDelete: () 
 @Composable
 fun PosterImage(url: String?) {
     AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(width = 82.dp, height = 112.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentScale = ContentScale.Crop)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AnimeDetailsScreen(
+    uiState: AniTrackUiState,
+    onOpenAnime: (Int) -> Unit,
+    onRetry: () -> Unit,
+    onAdd: (AnimeSearchResult, AnimeStatus) -> Unit
+) {
+    when {
+        uiState.isDetailsLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        uiState.detailsError != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Something went wrong", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(uiState.detailsError, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = onRetry) { Text("Retry") }
+            }
+        }
+        uiState.animeDetails != null -> AnimeDetailsContent(uiState.animeDetails, uiState.savedAnime, onOpenAnime, onAdd)
+        else -> EmptyPanel("No details", "Open an anime to see its details.")
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AnimeDetailsContent(
+    details: AnimeDetails,
+    savedAnime: List<AnimeEntry>,
+    onOpenAnime: (Int) -> Unit,
+    onAdd: (AnimeSearchResult, AnimeStatus) -> Unit
+) {
+    val alreadyAdded = remember(savedAnime, details.id) { savedAnime.any { it.id == details.id } }
+    var menuExpanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        if (!details.bannerImage.isNullOrBlank()) {
+            AsyncImage(
+                model = details.bannerImage,
+                contentDescription = null,
+                modifier = Modifier.fillMaxWidth().height(160.dp).background(MaterialTheme.colorScheme.surfaceVariant),
+                contentScale = ContentScale.Crop
+            )
+        }
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PosterImage(details.coverImage)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(details.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                    details.averageScore?.let {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(18.dp))
+                            Text("$it%", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    val meta = detailsMetaLine(details)
+                    if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Box {
+                Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(if (alreadyAdded) Icons.Default.Check else Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (alreadyAdded) "In your list — change folder" else "Add to list")
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    AnimeStatus.entries.forEach { status ->
+                        DropdownMenuItem(text = { Text(status.displayName()) }, onClick = {
+                            menuExpanded = false
+                            onAdd(details.toSearchResult(), status)
+                        })
+                    }
+                }
+            }
+
+            if (details.genres.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(details.genres) { genre -> AssistChip(onClick = {}, label = { Text(genre) }) }
+                }
+            }
+
+            if (!details.description.isNullOrBlank()) {
+                Text("Synopsis", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text(details.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            if (details.relations.isNotEmpty()) {
+                Text("Related", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(details.relations, key = { it.id }) { rel -> RelatedCard(rel) { onOpenAnime(rel.id) } }
+                }
+            }
+
+            if (details.recommendations.isNotEmpty()) {
+                Text("Recommended", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(details.recommendations, key = { it.id }) { rec -> RecommendationCard(rec) { onOpenAnime(rec.id) } }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+fun RelatedCard(rel: RelatedAnime, onClick: () -> Unit) {
+    Column(Modifier.width(120.dp).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        AsyncImage(
+            model = rel.coverImage,
+            contentDescription = null,
+            modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+            contentScale = ContentScale.Crop
+        )
+        if (rel.relationType.isNotBlank()) Text(rel.relationType, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(rel.title, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun RecommendationCard(rec: RecommendedAnime, onClick: () -> Unit) {
+    Column(Modifier.width(120.dp).clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        AsyncImage(
+            model = rec.coverImage,
+            contentDescription = null,
+            modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+            contentScale = ContentScale.Crop
+        )
+        rec.averageScore?.let { Text("$it%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+        Text(rec.title, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 @Composable
@@ -373,6 +579,46 @@ fun formatAiring(epochSeconds: Long?): String {
     if (epochSeconds == null) return "Unknown time"
     return Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d MMM • HH:mm"))
 }
+
+fun airingCountdown(epochSeconds: Long?): String {
+    if (epochSeconds == null) return "No airing date"
+    val now = Instant.now()
+    val target = Instant.ofEpochSecond(epochSeconds)
+    if (!target.isAfter(now)) return "Aired"
+    val duration = Duration.between(now, target)
+    val totalMinutes = duration.toMinutes()
+    if (totalMinutes < 60) return "Airs in ${totalMinutes.coerceAtLeast(1)}m"
+    if (duration.toHours() < 24) {
+        val hours = duration.toHours()
+        val minutes = totalMinutes - hours * 60
+        return "Airs in ${hours}h ${minutes}m"
+    }
+    val today = LocalDate.now()
+    val airingDate = epochToLocalDate(epochSeconds)
+    return when (val days = java.time.temporal.ChronoUnit.DAYS.between(today, airingDate)) {
+        0L -> "Airing today"
+        1L -> "Airing tomorrow"
+        else -> "In $days days"
+    }
+}
+
+fun detailsMetaLine(details: AnimeDetails): String {
+    val parts = mutableListOf<String>()
+    details.format?.takeIf { it.isNotBlank() }?.let { parts += it }
+    val seasonPart = listOfNotNull(details.season?.takeIf { it.isNotBlank() }, details.seasonYear?.toString()).joinToString(" ")
+    if (seasonPart.isNotBlank()) parts += seasonPart
+    details.episodes?.let { parts += "$it eps" }
+    details.studio?.takeIf { it.isNotBlank() }?.let { parts += it }
+    details.status?.takeIf { it.isNotBlank() }?.let { parts += it }
+    return parts.joinToString(" • ")
+}
+
+fun AnimeDetails.toSearchResult(): AnimeSearchResult = AnimeSearchResult(
+    id = id,
+    title = title,
+    coverImage = coverImage,
+    totalEpisodes = episodes
+)
 fun epochToLocalDate(epochSeconds: Long): LocalDate = Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()).toLocalDate()
 fun dayChipLabel(date: LocalDate, today: LocalDate): String = if (date == today) "Today" else date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
 fun selectedDayTitle(date: LocalDate, today: LocalDate): String {

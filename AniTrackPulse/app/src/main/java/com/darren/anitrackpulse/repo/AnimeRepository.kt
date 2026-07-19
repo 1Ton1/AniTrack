@@ -4,6 +4,7 @@ import com.darren.anitrackpulse.data.AnimeDao
 import com.darren.anitrackpulse.data.AnimeEntry
 import com.darren.anitrackpulse.data.AnimeStatus
 import com.darren.anitrackpulse.network.AniListApi
+import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
 import kotlinx.coroutines.flow.Flow
 
@@ -15,6 +16,8 @@ class AnimeRepository(
 
     suspend fun searchAnime(query: String): List<AnimeSearchResult> =
         if (query.isBlank()) emptyList() else api.searchAnime(query.trim())
+
+    suspend fun getAnimeDetails(id: Int): AnimeDetails? = api.getAnimeDetails(id)
 
     suspend fun saveAnime(result: AnimeSearchResult, status: AnimeStatus) {
         val existing = dao.getById(result.id)

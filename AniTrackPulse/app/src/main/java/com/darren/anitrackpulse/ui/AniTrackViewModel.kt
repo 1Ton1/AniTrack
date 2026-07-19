@@ -9,8 +9,11 @@ import com.darren.anitrackpulse.data.AnimeStatus
 import com.darren.anitrackpulse.data.AppDatabase
 import com.darren.anitrackpulse.data.SettingsRepository
 import com.darren.anitrackpulse.network.AniListApi
+import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
 import com.darren.anitrackpulse.repo.AnimeRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +38,10 @@ data class AniTrackUiState(
     val notificationsEnabled: Boolean = true,
     val focusedAnimeId: Int? = null,
     val notifications: List<UiNotification> = emptyList(),
-    val isNotificationPanelOpen: Boolean = false
+    val isNotificationPanelOpen: Boolean = false,
+    val animeDetails: AnimeDetails? = null,
+    val isDetailsLoading: Boolean = false,
+    val detailsError: String? = null
 ) {
     val hasUnreadNotifications: Boolean get() = notifications.isNotEmpty()
 }
@@ -53,11 +59,33 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { settings.notificationsEnabledFlow.collect { _uiState.value = _uiState.value.copy(notificationsEnabled = it) } }
     }
 
-    fun updateSearchQuery(query: String) { _uiState.value = _uiState.value.copy(searchQuery = query) }
-    fun clearSearch() { _uiState.value = _uiState.value.copy(searchQuery = "", searchResults = emptyList()) }
+    private var searchJob: Job? = null
+
+    fun updateSearchQuery(query: String) {
+        _uiState.value = _uiState.value.copy(searchQuery = query)
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _uiState.value = _uiState.value.copy(searchResults = emptyList(), isSearching = false)
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(350)
+            runSearch()
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _uiState.value = _uiState.value.copy(searchQuery = "", searchResults = emptyList(), isSearching = false)
+    }
     fun selectStatus(status: AnimeStatus) { _uiState.value = _uiState.value.copy(selectedStatus = status) }
 
-    fun search() = viewModelScope.launch {
+    fun search() {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { runSearch() }
+    }
+
+    private suspend fun runSearch() {
         _uiState.value = _uiState.value.copy(isSearching = true)
         try {
             _uiState.value = _uiState.value.copy(searchResults = repo.searchAnime(_uiState.value.searchQuery))
@@ -65,6 +93,22 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
             _uiState.value = _uiState.value.copy(isSearching = false)
         }
     }
+
+    fun loadDetails(id: Int) = viewModelScope.launch {
+        _uiState.value = _uiState.value.copy(isDetailsLoading = true, detailsError = null, animeDetails = null)
+        try {
+            val details = repo.getAnimeDetails(id)
+            _uiState.value = if (details != null) {
+                _uiState.value.copy(isDetailsLoading = false, animeDetails = details, detailsError = null)
+            } else {
+                _uiState.value.copy(isDetailsLoading = false, animeDetails = null, detailsError = "Couldn't load details. Check your connection and try again.")
+            }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(isDetailsLoading = false, animeDetails = null, detailsError = "Couldn't load details. Check your connection and try again.")
+        }
+    }
+
+    fun clearDetails() { _uiState.value = _uiState.value.copy(animeDetails = null, isDetailsLoading = false, detailsError = null) }
 
     fun addAnime(result: AnimeSearchResult, status: AnimeStatus) = viewModelScope.launch { repo.saveAnime(result, status) }
     fun deleteAnime(entry: AnimeEntry) = viewModelScope.launch { repo.deleteAnime(entry) }
