@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -398,8 +399,8 @@ fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetai
                 }
             }
             item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(AnimeStatus.entries) { status ->
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnimeStatus.entries.forEach { status ->
                         FilterChip(selected = uiState.selectedStatus == status, onClick = { vm.selectStatus(status) }, label = { Text(status.displayName()) })
                     }
                 }
@@ -930,8 +931,12 @@ fun AnimeCard(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(AnimeStatus.entries) { status -> FilterChip(selected = entry.status == status, onClick = { onMove(status) }, label = { Text(status.shortName()) }) }
+                // Only 4 fixed statuses ever exist here, so a plain scrollable Row avoids the
+                // overhead of a nested LazyRow (its own SubcomposeLayout) inside every single
+                // AnimeCard, which was adding up across the watchlist and making the main list
+                // feel sluggish while scrolling.
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnimeStatus.entries.forEach { status -> FilterChip(selected = entry.status == status, onClick = { onMove(status) }, label = { Text(status.shortName()) }) }
                 }
             }
         }
