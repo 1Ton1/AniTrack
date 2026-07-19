@@ -49,6 +49,8 @@ data class AniTrackUiState(
     val darkMode: Boolean = false,
     val notificationsEnabled: Boolean = true,
     val focusedAnimeId: Int? = null,
+    val isSelectionMode: Boolean = false,
+    val selectedIds: Set<Int> = emptySet(),
     val notifications: List<UiNotification> = emptyList(),
     val isNotificationPanelOpen: Boolean = false,
     val animeDetails: AnimeDetails? = null,
@@ -233,6 +235,37 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
         )
         _uiState.value = _uiState.value.copy(notifications = listOf(notification) + _uiState.value.notifications)
         sendReleaseSystemNotification(getApplication<Application>(), title, message)
+    }
+
+    fun togglePin(entry: AnimeEntry) = viewModelScope.launch { repo.setPinned(entry.id, !entry.isPinned) }
+
+    fun startRewatch(id: Int) = viewModelScope.launch { repo.startRewatch(id) }
+    fun stopRewatch(id: Int) = viewModelScope.launch { repo.stopRewatch(id) }
+
+    fun enterSelectionMode(initialId: Int) {
+        _uiState.value = _uiState.value.copy(isSelectionMode = true, selectedIds = setOf(initialId))
+    }
+
+    fun toggleSelection(id: Int) {
+        val current = _uiState.value.selectedIds
+        val updated = if (current.contains(id)) current - id else current + id
+        _uiState.value = _uiState.value.copy(selectedIds = updated)
+    }
+
+    fun exitSelectionMode() {
+        _uiState.value = _uiState.value.copy(isSelectionMode = false, selectedIds = emptySet())
+    }
+
+    fun bulkMove(status: AnimeStatus) = viewModelScope.launch {
+        val ids = _uiState.value.selectedIds.toList()
+        if (ids.isNotEmpty()) repo.moveMany(ids, status)
+        exitSelectionMode()
+    }
+
+    fun bulkDelete() = viewModelScope.launch {
+        val ids = _uiState.value.selectedIds.toList()
+        if (ids.isNotEmpty()) repo.deleteMany(ids)
+        exitSelectionMode()
     }
 
     fun clearFocus() { _uiState.value = _uiState.value.copy(focusedAnimeId = null) }

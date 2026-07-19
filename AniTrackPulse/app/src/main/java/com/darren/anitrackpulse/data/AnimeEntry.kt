@@ -15,5 +15,7 @@ data class AnimeEntry(
     val nextAiringAt: Long? = null,
     val notes: String = "",
     val lastNotifiedEpisode: Int? = null,
+    val isPinned: Boolean = false,
+    val isRewatching: Boolean = false,
     val updatedAt: Long = System.currentTimeMillis()
 )

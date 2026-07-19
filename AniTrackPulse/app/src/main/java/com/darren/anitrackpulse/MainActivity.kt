@@ -15,8 +15,11 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -137,7 +141,7 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
         bottomBar = {
             NavigationBar(modifier = Modifier.navigationBarsPadding()) {
                 listOf(ScreenDestination.WATCHLIST to Icons.Default.Star, ScreenDestination.SEARCH to Icons.Default.Search, ScreenDestination.CALENDAR to Icons.Default.CalendarMonth, ScreenDestination.STATS to Icons.Default.Insights).forEach { (screen, icon) ->
-                    NavigationBarItem(selected = !inDetails && currentScreen == screen, onClick = { detailStack.clear(); vm.clearDetails(); currentScreen = screen }, icon = { Icon(icon, screen.label) }, label = { Text(screen.label, fontSize = 11.sp) })
+                    NavigationBarItem(selected = !inDetails && currentScreen == screen, onClick = { detailStack.clear(); vm.clearDetails(); vm.exitSelectionMode(); currentScreen = screen }, icon = { Icon(icon, screen.label) }, label = { Text(screen.label, fontSize = 11.sp) })
                 }
             }
         },
@@ -222,8 +226,12 @@ fun NotificationPanel(uiState: AniTrackUiState, vm: AniTrackViewModel) {
 
 @Composable
 fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetails: (Int) -> Unit) {
-    val filtered = uiState.savedAnime.filter { it.status == uiState.selectedStatus }
+    val filtered = remember(uiState.savedAnime, uiState.selectedStatus) {
+        uiState.savedAnime.filter { it.status == uiState.selectedStatus }.sortedByDescending { it.isPinned }
+    }
     val listState = rememberLazyListState()
+    var showMoveDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     LaunchedEffect(uiState.focusedAnimeId, filtered) {
         val targetId = uiState.focusedAnimeId ?: return@LaunchedEffect
         val index = filtered.indexOfFirst { it.id == targetId }
@@ -232,24 +240,105 @@ fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetai
             vm.clearFocus()
         }
     }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(AnimeStatus.entries) { status ->
-                FilterChip(selected = uiState.selectedStatus == status, onClick = { vm.selectStatus(status) }, label = { Text(status.displayName()) })
+    BackHandler(enabled = uiState.isSelectionMode) { vm.exitSelectionMode() }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            if (uiState.isSelectionMode) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(onClick = vm::exitSelectionMode) { Icon(Icons.Default.Close, contentDescription = "Exit selection") }
+                        Text("${uiState.selectedIds.size} selected", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(AnimeStatus.entries) { status ->
+                    FilterChip(selected = uiState.selectedStatus == status, onClick = { vm.selectStatus(status) }, label = { Text(status.displayName()) })
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = vm::refreshAll) { Text(if (uiState.isRefreshing) "Refreshing..." else "Refresh saved") }
+                AssistChip(onClick = {}, label = { Text("${filtered.size} in folder") })
+            }
+            Spacer(Modifier.height(12.dp))
+            if (filtered.isEmpty()) EmptyPanel("No anime here yet", "Search for anime and save them to ${uiState.selectedStatus.displayName().lowercase()}.")
+            else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = if (uiState.isSelectionMode) 88.dp else 0.dp)) {
+                items(filtered, key = { it.id }) { entry ->
+                    AnimeCard(
+                        entry = entry,
+                        selectionMode = uiState.isSelectionMode,
+                        selected = uiState.selectedIds.contains(entry.id),
+                        onIncrementCapped = { newCount -> vm.updateWatchedEpisodes(entry.id.toLong(), newCount) },
+                        onDelete = { vm.deleteAnime(entry) },
+                        onMove = { vm.moveAnime(entry.id.toLong(), it) },
+                        onRefresh = { vm.refreshAnime(entry.id.toLong()) },
+                        onOpenDetails = { onOpenDetails(entry.id) },
+                        onTogglePin = { vm.togglePin(entry) },
+                        onStartRewatch = { vm.startRewatch(entry.id) },
+                        onStopRewatch = { vm.stopRewatch(entry.id) },
+                        onToggleSelect = { vm.toggleSelection(entry.id) },
+                        onEnterSelection = { vm.enterSelectionMode(entry.id) }
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = vm::refreshAll) { Text(if (uiState.isRefreshing) "Refreshing..." else "Refresh saved") }
-            AssistChip(onClick = {}, label = { Text("${filtered.size} in folder") })
-        }
-        Spacer(Modifier.height(12.dp))
-        if (filtered.isEmpty()) EmptyPanel("No anime here yet", "Search for anime and save them to ${uiState.selectedStatus.displayName().lowercase()}.")
-        else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(filtered, key = { it.id }) { entry ->
-                AnimeCard(entry, { newCount -> vm.updateWatchedEpisodes(entry.id.toLong(), newCount) }, { vm.deleteAnime(entry) }, { vm.moveAnime(entry.id.toLong(), it) }, { vm.refreshAnime(entry.id.toLong()) }, { onOpenDetails(entry.id) })
+
+        if (uiState.isSelectionMode && uiState.selectedIds.isNotEmpty()) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                tonalElevation = 3.dp,
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(onClick = { showMoveDialog = true }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.DriveFileMove, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Move to...")
+                    }
+                    OutlinedButton(onClick = { showDeleteDialog = true }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Delete")
+                    }
+                }
             }
         }
+    }
+
+    if (showMoveDialog) {
+        AlertDialog(
+            onDismissRequest = { showMoveDialog = false },
+            title = { Text("Move ${uiState.selectedIds.size} to folder") },
+            text = {
+                Column {
+                    AnimeStatus.entries.forEach { status ->
+                        Text(
+                            status.displayName(),
+                            modifier = Modifier.fillMaxWidth().clickable { showMoveDialog = false; vm.bulkMove(status) }.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showMoveDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete ${uiState.selectedIds.size} anime?") },
+            text = { Text("This removes the selected anime from your watchlist. This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { showDeleteDialog = false; vm.bulkDelete() }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -607,30 +696,96 @@ fun SearchResultCard(result: AnimeSearchResult, alreadyAdded: Boolean, onOpenDet
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AnimeCard(entry: AnimeEntry, onIncrementCapped: (Int) -> Unit, onDelete: () -> Unit, onMove: (AnimeStatus) -> Unit, onRefresh: () -> Unit, onOpenDetails: () -> Unit) {
+fun AnimeCard(
+    entry: AnimeEntry,
+    selectionMode: Boolean,
+    selected: Boolean,
+    onIncrementCapped: (Int) -> Unit,
+    onDelete: () -> Unit,
+    onMove: (AnimeStatus) -> Unit,
+    onRefresh: () -> Unit,
+    onOpenDetails: () -> Unit,
+    onTogglePin: () -> Unit,
+    onStartRewatch: () -> Unit,
+    onStopRewatch: () -> Unit,
+    onToggleSelect: () -> Unit,
+    onEnterSelection: () -> Unit
+) {
     val maxEpisodes = entry.totalEpisodes ?: Int.MAX_VALUE
     val canIncrease = entry.watchedEpisodes < maxEpisodes
-    Card(modifier = Modifier.fillMaxWidth()) {
+    val cardModifier = if (selectionMode && selected) {
+        Modifier.fillMaxWidth().border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    Card(modifier = cardModifier) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
-            Row(Modifier.fillMaxWidth().clickable(onClick = onOpenDetails), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                Modifier.fillMaxWidth().combinedClickable(
+                    onClick = { if (selectionMode) onToggleSelect() else onOpenDetails() },
+                    onLongClick = { if (selectionMode) onToggleSelect() else onEnterSelection() }
+                ),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (selectionMode) {
+                    Icon(
+                        if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        contentDescription = if (selected) "Selected" else "Not selected",
+                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterVertically)
+                    )
+                }
                 PosterImage(entry.coverImage)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(entry.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(entry.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (entry.isRewatching) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.primary)
+                                    .clickable(enabled = !selectionMode, onClick = onStopRewatch)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text("Rewatching", color = MaterialTheme.colorScheme.onPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     Text("Watched ${entry.watchedEpisodes}${entry.totalEpisodes?.let { " / $it" } ?: ""}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(remainingEpisodesLabel(entry), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     Text(entry.nextAiringAt?.let { "Episode ${entry.nextEpisode ?: "?"} airs ${formatAiring(it)}" } ?: "No airing date available", color = MaterialTheme.colorScheme.primary)
                 }
+                if (!selectionMode) {
+                    IconButton(onClick = onTogglePin) {
+                        Icon(
+                            if (entry.isPinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                            contentDescription = if (entry.isPinned) "Unpin" else "Pin",
+                            tint = if (entry.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onIncrementCapped((entry.watchedEpisodes + 1).coerceAtMost(maxEpisodes)) }, enabled = canIncrease, modifier = Modifier.widthIn(min = 120.dp)) { Text(if (canIncrease) "+ Episode" else "Max reached") }
-                OutlinedButton(onClick = onRefresh) { Text("Refresh") }
-                OutlinedButton(onClick = onDelete) { Text("Delete") }
-            }
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(AnimeStatus.entries) { status -> FilterChip(selected = entry.status == status, onClick = { onMove(status) }, label = { Text(status.shortName()) }) }
+            if (!selectionMode) {
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onIncrementCapped((entry.watchedEpisodes + 1).coerceAtMost(maxEpisodes)) }, enabled = canIncrease, modifier = Modifier.widthIn(min = 120.dp)) { Text(if (canIncrease) "+ Episode" else "Max reached") }
+                    OutlinedButton(onClick = onRefresh) { Text("Refresh") }
+                    OutlinedButton(onClick = onDelete) { Text("Delete") }
+                }
+                if (entry.status == AnimeStatus.FINISHED && !entry.isRewatching) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onStartRewatch) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Rewatch")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(AnimeStatus.entries) { status -> FilterChip(selected = entry.status == status, onClick = { onMove(status) }, label = { Text(status.shortName()) }) }
+                }
             }
         }
     }

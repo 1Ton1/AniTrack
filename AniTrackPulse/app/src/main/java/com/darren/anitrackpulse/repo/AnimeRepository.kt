@@ -45,6 +45,8 @@ class AnimeRepository(
                 nextAiringAt = result.nextAiringAt,
                 notes = existing?.notes.orEmpty(),
                 lastNotifiedEpisode = existing?.lastNotifiedEpisode,
+                isPinned = existing?.isPinned ?: false,
+                isRewatching = existing?.isRewatching ?: false,
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -54,6 +56,12 @@ class AnimeRepository(
         val existing = dao.getById(id) ?: return
         dao.upsert(existing.copy(status = newStatus, updatedAt = System.currentTimeMillis()))
     }
+
+    suspend fun setPinned(id: Int, pinned: Boolean) { dao.setPinned(id, pinned, System.currentTimeMillis()) }
+    suspend fun startRewatch(id: Int) { dao.startRewatch(id, System.currentTimeMillis()) }
+    suspend fun stopRewatch(id: Int) { dao.stopRewatch(id, System.currentTimeMillis()) }
+    suspend fun moveMany(ids: List<Int>, newStatus: AnimeStatus) { dao.moveMany(ids, newStatus, System.currentTimeMillis()) }
+    suspend fun deleteMany(ids: List<Int>) { dao.deleteMany(ids) }
 
     suspend fun incrementWatched(id: Int) { dao.incrementWatched(id, System.currentTimeMillis()) }
     suspend fun deleteAnime(entry: AnimeEntry) { dao.delete(entry) }
