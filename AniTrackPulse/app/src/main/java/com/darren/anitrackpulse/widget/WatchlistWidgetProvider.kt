@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.RemoteViews
 import com.darren.anitrackpulse.MainActivity
 import com.darren.anitrackpulse.R
@@ -22,21 +23,35 @@ class WatchlistWidgetProvider : AppWidgetProvider() {
                 val entries = AppDatabase.getDatabase(context).animeDao().getUpcomingBlocking()
                 val nowSeconds = System.currentTimeMillis() / 1000
                 val airedCount = entries.count { (it.nextAiringAt ?: 0L) in 1..nowSeconds }
-                val next = entries.firstOrNull { (it.nextAiringAt ?: 0L) > nowSeconds }
+                val upcoming = entries.filter { (it.nextAiringAt ?: 0L) > nowSeconds }.take(3)
 
                 val summary = if (airedCount > 0) {
-                    "$airedCount new episode${if (airedCount == 1) "" else "s"} to watch"
+                    "$airedCount new to watch"
                 } else {
-                    "No new episodes yet"
+                    "Up next"
                 }
-                val nextLine = next?.let { "Next: ${it.title} · Ep ${it.nextEpisode ?: "?"} · ${airingCountdown(it.nextAiringAt)}" }
-                    ?: "No upcoming episodes"
+
+                val rowContainers = intArrayOf(R.id.widget_row_0, R.id.widget_row_1, R.id.widget_row_2)
+                val rowTitles = intArrayOf(R.id.widget_row_0_title, R.id.widget_row_1_title, R.id.widget_row_2_title)
+                val rowTimes = intArrayOf(R.id.widget_row_0_time, R.id.widget_row_1_time, R.id.widget_row_2_time)
 
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 appWidgetIds.forEach { widgetId ->
                     val views = RemoteViews(context.packageName, R.layout.widget_watchlist)
                     views.setTextViewText(R.id.widget_summary, summary)
-                    views.setTextViewText(R.id.widget_next, nextLine)
+
+                    for (i in rowContainers.indices) {
+                        val entry = upcoming.getOrNull(i)
+                        if (entry != null) {
+                            views.setViewVisibility(rowContainers[i], View.VISIBLE)
+                            views.setTextViewText(rowTitles[i], "${entry.title} · Ep ${entry.nextEpisode ?: "?"}")
+                            views.setTextViewText(rowTimes[i], airingCountdown(entry.nextAiringAt))
+                        } else {
+                            views.setViewVisibility(rowContainers[i], View.GONE)
+                        }
+                    }
+                    views.setViewVisibility(R.id.widget_empty, if (upcoming.isEmpty()) View.VISIBLE else View.GONE)
+
                     val intent = Intent(context, MainActivity::class.java)
                     val pi = PendingIntent.getActivity(context, 0, intent, flags)
                     views.setOnClickPendingIntent(R.id.widget_root, pi)

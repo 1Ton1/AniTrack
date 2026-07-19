@@ -135,7 +135,7 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
                         }
                     }
                 },
-                actions = { NotificationIcon(hasUnread = uiState.hasUnreadNotifications, count = uiState.notifications.size) { vm.toggleNotificationPanel() } }
+                actions = { NotificationIcon(hasUnread = uiState.hasUnreadNotifications, count = uiState.unreadNotificationCount) { vm.toggleNotificationPanel() } }
             )
         },
         bottomBar = {
@@ -192,24 +192,79 @@ fun NotificationIcon(hasUnread: Boolean, count: Int, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationPanel(uiState: AniTrackUiState, vm: AniTrackViewModel) {
+    var showUnreadOnly by remember { mutableStateOf(false) }
+    var animeFilter by remember { mutableStateOf<Int?>(null) }
+    // Reset a stale per-anime filter if that anime no longer has notifications.
+    LaunchedEffect(uiState.notifications) {
+        if (animeFilter != null && uiState.notifications.none { it.animeId == animeFilter }) animeFilter = null
+    }
+    val animeOptions = remember(uiState.notifications) {
+        uiState.notifications.distinctBy { it.animeId }.map { it.title to it.animeId }
+    }
+    val visible = uiState.notifications.filter {
+        (!showUnreadOnly || !it.isRead) && (animeFilter == null || it.animeId == animeFilter)
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)).clickable(onClick = { vm.toggleNotificationPanel() }, indication = null, interactionSource = remember { MutableInteractionSource() }))
     Box(modifier = Modifier.fillMaxSize()) {
         Card(modifier = Modifier.fillMaxWidth().padding(16.dp).wrapContentHeight().align(Alignment.TopCenter)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Recent releases", fontWeight = FontWeight.Bold)
-                    TextButton(onClick = vm::clearAllNotifications, enabled = uiState.notifications.isNotEmpty()) { Text("Clear all") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = vm::markAllNotificationsRead, enabled = uiState.hasUnreadNotifications) { Text("Mark read") }
+                        TextButton(onClick = vm::clearAllNotifications, enabled = uiState.notifications.isNotEmpty()) { Text("Clear all") }
+                    }
+                }
+                if (uiState.notifications.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item {
+                            FilterChip(selected = !showUnreadOnly, onClick = { showUnreadOnly = false }, label = { Text("All") })
+                        }
+                        item {
+                            FilterChip(selected = showUnreadOnly, onClick = { showUnreadOnly = true }, label = { Text("Unread (${uiState.unreadNotificationCount})") })
+                        }
+                        if (animeOptions.size > 1) {
+                            item {
+                                FilterDropdownChip(
+                                    label = "Anime",
+                                    selectedLabel = animeFilter?.let { id -> animeOptions.firstOrNull { it.second == id }?.first } ?: "All",
+                                    options = listOf("All anime" to null) + animeOptions.map { it.first to it.second },
+                                    isActive = animeFilter != null,
+                                    onSelect = { animeFilter = it }
+                                )
+                            }
+                        }
+                    }
                 }
                 if (uiState.notifications.isEmpty()) {
                     Text("No recent released anime.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (visible.isEmpty()) {
+                    Text("Nothing matches this filter.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 320.dp)) {
-                        items(uiState.notifications, key = { it.id }) { note ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        items(visible, key = { it.id }) { note ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { if (!note.isRead) vm.markNotificationRead(note.id) },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.size(8.dp).clip(RoundedCornerShape(4.dp))
+                                        .background(if (note.isRead) Color.Transparent else MaterialTheme.colorScheme.primary)
+                                )
+                                Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(note.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        note.title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontWeight = if (note.isRead) FontWeight.Normal else FontWeight.Bold,
+                                        color = if (note.isRead) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                                    )
                                     Text(note.message, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 IconButton(onClick = { vm.removeNotification(note.id) }, modifier = Modifier.size(28.dp)) {
@@ -217,6 +272,71 @@ fun NotificationPanel(uiState: AniTrackUiState, vm: AniTrackViewModel) {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun UpNextCard(savedAnime: List<AnimeEntry>) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(60_000)
+        }
+    }
+    val nowSeconds = now / 1000
+    val next = remember(savedAnime, nowSeconds / 60) {
+        savedAnime
+            .filter { (it.nextAiringAt ?: 0L) > nowSeconds }
+            .minByOrNull { it.nextAiringAt ?: Long.MAX_VALUE }
+    }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (next != null) {
+                PosterImage(next.coverImage)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("UP NEXT", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(next.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("Episode ${next.nextEpisode ?: "?"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(liveCountdown(next.nextAiringAt, now), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
+            } else {
+                Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("UP NEXT", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text("Nothing airing soon", fontWeight = FontWeight.SemiBold)
+                    Text("New episodes will show up here as they're scheduled.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ContinueWatchingRow(savedAnime: List<AnimeEntry>, onIncrement: (Int, Int) -> Unit) {
+    val items = remember(savedAnime) {
+        savedAnime.filter { it.status == AnimeStatus.WATCHING && it.watchedEpisodes < (it.totalEpisodes ?: Int.MAX_VALUE) }
+            .sortedByDescending { it.updatedAt }
+    }
+    if (items.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Continue Watching", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(items, key = { it.id }) { entry ->
+                val maxEpisodes = entry.totalEpisodes ?: Int.MAX_VALUE
+                Column(Modifier.width(96.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PosterImage(entry.coverImage)
+                    Text(entry.title, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Button(
+                        onClick = { onIncrement(entry.id, (entry.watchedEpisodes + 1).coerceAtMost(maxEpisodes)) },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.fillMaxWidth().height(32.dp)
+                    ) {
+                        Text("+1 · Ep ${entry.watchedEpisodes + 1}", fontSize = 11.sp, maxLines = 1)
                     }
                 }
             }
@@ -252,6 +372,11 @@ fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetai
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+            }
+            if (!uiState.isSelectionMode) {
+                UpNextCard(uiState.savedAnime)
+                Spacer(Modifier.height(12.dp))
+                ContinueWatchingRow(uiState.savedAnime) { id, newCount -> vm.updateWatchedEpisodes(id.toLong(), newCount) }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(AnimeStatus.entries) { status ->
@@ -989,6 +1114,23 @@ fun airingCountdown(epochSeconds: Long?): String {
         0L -> "Airing today"
         1L -> "Airing tomorrow"
         else -> "In $days days"
+    }
+}
+
+/** Live, minute-resolution countdown ("2d 5h 13m" / "5h 13m" / "13m"). [nowMillis] is passed in so the caller can recompute on a ticker. */
+fun liveCountdown(epochSeconds: Long?, nowMillis: Long): String {
+    if (epochSeconds == null) return "No airing date"
+    val targetMillis = epochSeconds * 1000
+    val remaining = targetMillis - nowMillis
+    if (remaining <= 0) return "Aired"
+    val totalMinutes = remaining / 60_000
+    val days = totalMinutes / (24 * 60)
+    val hours = (totalMinutes % (24 * 60)) / 60
+    val minutes = totalMinutes % 60
+    return when {
+        days > 0 -> "${days}d ${hours}h ${minutes}m"
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes.coerceAtLeast(1)}m"
     }
 }
 

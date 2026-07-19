@@ -30,7 +30,8 @@ data class UiNotification(
     val animeId: Int,
     val title: String,
     val message: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val isRead: Boolean = false
 )
 
 data class AniTrackUiState(
@@ -57,7 +58,8 @@ data class AniTrackUiState(
     val isDetailsLoading: Boolean = false,
     val detailsError: String? = null
 ) {
-    val hasUnreadNotifications: Boolean get() = notifications.isNotEmpty()
+    val hasUnreadNotifications: Boolean get() = notifications.any { !it.isRead }
+    val unreadNotificationCount: Int get() = notifications.count { !it.isRead }
 }
 
 class AniTrackViewModel(application: Application) : AndroidViewModel(application) {
@@ -273,6 +275,16 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
     fun toggleNotifications(enabled: Boolean) = viewModelScope.launch { settings.setNotificationsEnabled(enabled) }
     fun clearAllNotifications() { _uiState.value = _uiState.value.copy(notifications = emptyList()) }
     fun removeNotification(id: Long) { _uiState.value = _uiState.value.copy(notifications = _uiState.value.notifications.filterNot { it.id == id }) }
+    fun markNotificationRead(id: Long) {
+        _uiState.value = _uiState.value.copy(
+            notifications = _uiState.value.notifications.map { if (it.id == id) it.copy(isRead = true) else it }
+        )
+    }
+    fun markAllNotificationsRead() {
+        _uiState.value = _uiState.value.copy(
+            notifications = _uiState.value.notifications.map { it.copy(isRead = true) }
+        )
+    }
     fun toggleNotificationPanel() { _uiState.value = _uiState.value.copy(isNotificationPanelOpen = !_uiState.value.isNotificationPanelOpen) }
 
     class Factory(private val application: Application) : ViewModelProvider.Factory {
