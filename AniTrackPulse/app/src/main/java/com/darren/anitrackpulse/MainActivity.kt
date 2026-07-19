@@ -352,45 +352,67 @@ fun WatchlistScreen(uiState: AniTrackUiState, vm: AniTrackViewModel, onOpenDetai
     val listState = rememberLazyListState()
     var showMoveDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    // Every branch below contributes exactly one fixed header item before the anime
+    // entries (selection-header OR up-next+continue-watching, then chips, then refresh row),
+    // so the anime item at [index] always lands at [index + HEADER_ITEM_COUNT] in the single list.
+    val headerItemCount = 3
     LaunchedEffect(uiState.focusedAnimeId, filtered) {
         val targetId = uiState.focusedAnimeId ?: return@LaunchedEffect
         val index = filtered.indexOfFirst { it.id == targetId }
         if (index >= 0) {
-            listState.animateScrollToItem(index)
+            listState.animateScrollToItem(index + headerItemCount)
             vm.clearFocus()
         }
     }
     BackHandler(enabled = uiState.isSelectionMode) { vm.exitSelectionMode() }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
+        // Single LazyColumn for the whole screen (header cards + filters + anime list) so the
+        // entire page scrolls together as one gesture, instead of a non-scrolling header on top
+        // of a separately-scrolling list (which made most of the screen feel unresponsive to swipes).
+        LazyColumn(
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = if (uiState.isSelectionMode) 88.dp else 16.dp
+            )
+        ) {
             if (uiState.isSelectionMode) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconButton(onClick = vm::exitSelectionMode) { Icon(Icons.Default.Close, contentDescription = "Exit selection") }
-                        Text("${uiState.selectedIds.size} selected", fontWeight = FontWeight.SemiBold)
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            IconButton(onClick = vm::exitSelectionMode) { Icon(Icons.Default.Close, contentDescription = "Exit selection") }
+                            Text("${uiState.selectedIds.size} selected", fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-            }
-            if (!uiState.isSelectionMode) {
-                UpNextCard(uiState.savedAnime)
-                Spacer(Modifier.height(12.dp))
-                ContinueWatchingRow(uiState.savedAnime) { id, newCount -> vm.updateWatchedEpisodes(id.toLong(), newCount) }
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(AnimeStatus.entries) { status ->
-                    FilterChip(selected = uiState.selectedStatus == status, onClick = { vm.selectStatus(status) }, label = { Text(status.displayName()) })
+            } else {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        UpNextCard(uiState.savedAnime)
+                        ContinueWatchingRow(uiState.savedAnime) { id, newCount -> vm.updateWatchedEpisodes(id.toLong(), newCount) }
+                    }
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = vm::refreshAll) { Text(if (uiState.isRefreshing) "Refreshing..." else "Refresh saved") }
-                AssistChip(onClick = {}, label = { Text("${filtered.size} in folder") })
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(AnimeStatus.entries) { status ->
+                        FilterChip(selected = uiState.selectedStatus == status, onClick = { vm.selectStatus(status) }, label = { Text(status.displayName()) })
+                    }
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            if (filtered.isEmpty()) EmptyPanel("No anime here yet", "Search for anime and save them to ${uiState.selectedStatus.displayName().lowercase()}.")
-            else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = if (uiState.isSelectionMode) 88.dp else 0.dp)) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = vm::refreshAll) { Text(if (uiState.isRefreshing) "Refreshing..." else "Refresh saved") }
+                    AssistChip(onClick = {}, label = { Text("${filtered.size} in folder") })
+                }
+            }
+            if (filtered.isEmpty()) {
+                item { EmptyPanel("No anime here yet", "Search for anime and save them to ${uiState.selectedStatus.displayName().lowercase()}.") }
+            } else {
                 items(filtered, key = { it.id }) { entry ->
                     AnimeCard(
                         entry = entry,
