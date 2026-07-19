@@ -4,7 +4,12 @@ import com.darren.anitrackpulse.data.AnimeDao
 import com.darren.anitrackpulse.data.AnimeEntry
 import com.darren.anitrackpulse.data.AnimeStatus
 import com.darren.anitrackpulse.network.AniListApi
+import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
+import com.darren.anitrackpulse.network.AnimeSeason
+import com.darren.anitrackpulse.network.SearchFormat
+import com.darren.anitrackpulse.network.SearchSort
+import com.darren.anitrackpulse.network.SearchStatusFilter
 import kotlinx.coroutines.flow.Flow
 
 class AnimeRepository(
@@ -13,8 +18,18 @@ class AnimeRepository(
 ) {
     fun observeSavedAnime(): Flow<List<AnimeEntry>> = dao.observeAll()
 
-    suspend fun searchAnime(query: String): List<AnimeSearchResult> =
-        if (query.isBlank()) emptyList() else api.searchAnime(query.trim())
+    suspend fun searchAnime(
+        query: String,
+        format: SearchFormat = SearchFormat.ANY,
+        status: SearchStatusFilter = SearchStatusFilter.ANY,
+        sort: SearchSort = SearchSort.RELEVANCE
+    ): List<AnimeSearchResult> =
+        if (query.isBlank()) emptyList() else api.searchAnime(query.trim(), format, status, sort)
+
+    suspend fun getSeasonalPopular(season: AnimeSeason, seasonYear: Int): List<AnimeSearchResult> =
+        api.getSeasonalPopular(season, seasonYear)
+
+    suspend fun getAnimeDetails(id: Int): AnimeDetails? = api.getAnimeDetails(id)
 
     suspend fun saveAnime(result: AnimeSearchResult, status: AnimeStatus) {
         val existing = dao.getById(result.id)
@@ -30,6 +45,8 @@ class AnimeRepository(
                 nextAiringAt = result.nextAiringAt,
                 notes = existing?.notes.orEmpty(),
                 lastNotifiedEpisode = existing?.lastNotifiedEpisode,
+                isPinned = existing?.isPinned ?: false,
+                isRewatching = existing?.isRewatching ?: false,
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -39,6 +56,12 @@ class AnimeRepository(
         val existing = dao.getById(id) ?: return
         dao.upsert(existing.copy(status = newStatus, updatedAt = System.currentTimeMillis()))
     }
+
+    suspend fun setPinned(id: Int, pinned: Boolean) { dao.setPinned(id, pinned, System.currentTimeMillis()) }
+    suspend fun startRewatch(id: Int) { dao.startRewatch(id, System.currentTimeMillis()) }
+    suspend fun stopRewatch(id: Int) { dao.stopRewatch(id, System.currentTimeMillis()) }
+    suspend fun moveMany(ids: List<Int>, newStatus: AnimeStatus) { dao.moveMany(ids, newStatus, System.currentTimeMillis()) }
+    suspend fun deleteMany(ids: List<Int>) { dao.deleteMany(ids) }
 
     suspend fun incrementWatched(id: Int) { dao.incrementWatched(id, System.currentTimeMillis()) }
     suspend fun deleteAnime(entry: AnimeEntry) { dao.delete(entry) }

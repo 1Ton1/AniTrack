@@ -24,6 +24,24 @@ interface AnimeDao {
     @Query("UPDATE anime_entries SET watchedEpisodes = watchedEpisodes + 1, updatedAt = :updatedAt WHERE id = :id")
     suspend fun incrementWatched(id: Int, updatedAt: Long)
 
+    @Query("UPDATE anime_entries SET isPinned = :pinned, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setPinned(id: Int, pinned: Boolean, updatedAt: Long)
+
+    @Query("UPDATE anime_entries SET isRewatching = 1, watchedEpisodes = 0, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun startRewatch(id: Int, updatedAt: Long)
+
+    @Query("UPDATE anime_entries SET isRewatching = 0, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun stopRewatch(id: Int, updatedAt: Long)
+
+    @Query("UPDATE anime_entries SET status = :status, updatedAt = :updatedAt WHERE id IN (:ids)")
+    suspend fun moveMany(ids: List<Int>, status: AnimeStatus, updatedAt: Long)
+
+    @Query("DELETE FROM anime_entries WHERE id IN (:ids)")
+    suspend fun deleteMany(ids: List<Int>)
+
+    @Query("SELECT * FROM anime_entries WHERE nextAiringAt IS NOT NULL ORDER BY nextAiringAt ASC")
+    fun getUpcomingBlocking(): List<AnimeEntry>
+
     @Delete
     suspend fun delete(entry: AnimeEntry)
 }

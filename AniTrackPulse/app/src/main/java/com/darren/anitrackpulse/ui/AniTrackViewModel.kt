@@ -9,8 +9,17 @@ import com.darren.anitrackpulse.data.AnimeStatus
 import com.darren.anitrackpulse.data.AppDatabase
 import com.darren.anitrackpulse.data.SettingsRepository
 import com.darren.anitrackpulse.network.AniListApi
+import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
+import com.darren.anitrackpulse.network.AnimeSeason
+import com.darren.anitrackpulse.network.SearchFormat
+import com.darren.anitrackpulse.network.SearchSort
+import com.darren.anitrackpulse.network.SearchStatusFilter
 import com.darren.anitrackpulse.repo.AnimeRepository
+import java.time.LocalDate
+import com.darren.anitrackpulse.sendReleaseSystemNotification
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,23 +30,36 @@ data class UiNotification(
     val animeId: Int,
     val title: String,
     val message: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val isRead: Boolean = false
 )
 
 data class AniTrackUiState(
     val savedAnime: List<AnimeEntry> = emptyList(),
     val searchQuery: String = "",
     val searchResults: List<AnimeSearchResult> = emptyList(),
+    val searchFormat: SearchFormat = SearchFormat.ANY,
+    val searchStatus: SearchStatusFilter = SearchStatusFilter.ANY,
+    val searchSort: SearchSort = SearchSort.RELEVANCE,
+    val seasonalResults: List<AnimeSearchResult> = emptyList(),
+    val isSeasonalLoading: Boolean = false,
+    val seasonLabel: String = "",
     val selectedStatus: AnimeStatus = AnimeStatus.WATCHING,
     val isSearching: Boolean = false,
     val isRefreshing: Boolean = false,
     val darkMode: Boolean = false,
     val notificationsEnabled: Boolean = true,
     val focusedAnimeId: Int? = null,
+    val isSelectionMode: Boolean = false,
+    val selectedIds: Set<Int> = emptySet(),
     val notifications: List<UiNotification> = emptyList(),
-    val isNotificationPanelOpen: Boolean = false
+    val isNotificationPanelOpen: Boolean = false,
+    val animeDetails: AnimeDetails? = null,
+    val isDetailsLoading: Boolean = false,
+    val detailsError: String? = null
 ) {
-    val hasUnreadNotifications: Boolean get() = notifications.isNotEmpty()
+    val hasUnreadNotifications: Boolean get() = notifications.any { !it.isRead }
+    val unreadNotificationCount: Int get() = notifications.count { !it.isRead }
 }
 
 class AniTrackViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,18 +75,107 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { settings.notificationsEnabledFlow.collect { _uiState.value = _uiState.value.copy(notificationsEnabled = it) } }
     }
 
-    fun updateSearchQuery(query: String) { _uiState.value = _uiState.value.copy(searchQuery = query) }
-    fun clearSearch() { _uiState.value = _uiState.value.copy(searchQuery = "", searchResults = emptyList()) }
+    private var searchJob: Job? = null
+
+    fun updateSearchQuery(query: String) {
+        _uiState.value = _uiState.value.copy(searchQuery = query)
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _uiState.value = _uiState.value.copy(searchResults = emptyList(), isSearching = false)
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(350)
+            runSearch()
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _uiState.value = _uiState.value.copy(searchQuery = "", searchResults = emptyList(), isSearching = false)
+    }
     fun selectStatus(status: AnimeStatus) { _uiState.value = _uiState.value.copy(selectedStatus = status) }
 
-    fun search() = viewModelScope.launch {
+    fun search() {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { runSearch() }
+    }
+
+    private suspend fun runSearch() {
         _uiState.value = _uiState.value.copy(isSearching = true)
         try {
-            _uiState.value = _uiState.value.copy(searchResults = repo.searchAnime(_uiState.value.searchQuery))
+            val state = _uiState.value
+            _uiState.value = _uiState.value.copy(
+                searchResults = repo.searchAnime(
+                    state.searchQuery,
+                    state.searchFormat,
+                    state.searchStatus,
+                    state.searchSort
+                )
+            )
         } finally {
             _uiState.value = _uiState.value.copy(isSearching = false)
         }
     }
+
+    private fun rerunSearchIfActive() {
+        if (_uiState.value.searchQuery.isBlank()) return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { runSearch() }
+    }
+
+    fun setSearchFormat(format: SearchFormat) {
+        if (_uiState.value.searchFormat == format) return
+        _uiState.value = _uiState.value.copy(searchFormat = format)
+        rerunSearchIfActive()
+    }
+
+    fun setSearchStatus(status: SearchStatusFilter) {
+        if (_uiState.value.searchStatus == status) return
+        _uiState.value = _uiState.value.copy(searchStatus = status)
+        rerunSearchIfActive()
+    }
+
+    fun setSearchSort(sort: SearchSort) {
+        if (_uiState.value.searchSort == sort) return
+        _uiState.value = _uiState.value.copy(searchSort = sort)
+        rerunSearchIfActive()
+    }
+
+    fun loadSeasonal() {
+        if (_uiState.value.isSeasonalLoading || _uiState.value.seasonalResults.isNotEmpty()) return
+        val today = LocalDate.now()
+        val season = AnimeSeason.fromMonth(today.monthValue)
+        val year = today.year
+        _uiState.value = _uiState.value.copy(
+            isSeasonalLoading = true,
+            seasonLabel = "${season.label} $year"
+        )
+        viewModelScope.launch {
+            try {
+                val results = repo.getSeasonalPopular(season, year)
+                _uiState.value = _uiState.value.copy(seasonalResults = results, isSeasonalLoading = false)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isSeasonalLoading = false)
+            }
+        }
+    }
+
+    fun loadDetails(id: Int) = viewModelScope.launch {
+        _uiState.value = _uiState.value.copy(isDetailsLoading = true, detailsError = null, animeDetails = null)
+        try {
+            val details = repo.getAnimeDetails(id)
+            _uiState.value = if (details != null) {
+                _uiState.value.copy(isDetailsLoading = false, animeDetails = details, detailsError = null)
+            } else {
+                _uiState.value.copy(isDetailsLoading = false, animeDetails = null, detailsError = "Couldn't load details. Check your connection and try again.")
+            }
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(isDetailsLoading = false, animeDetails = null, detailsError = "Couldn't load details. Check your connection and try again.")
+        }
+    }
+
+    fun clearDetails() { _uiState.value = _uiState.value.copy(animeDetails = null, isDetailsLoading = false, detailsError = null) }
 
     fun addAnime(result: AnimeSearchResult, status: AnimeStatus) = viewModelScope.launch { repo.saveAnime(result, status) }
     fun deleteAnime(entry: AnimeEntry) = viewModelScope.launch { repo.deleteAnime(entry) }
@@ -110,6 +221,53 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
         )
         val existing = _uiState.value.notifications.filterNot { it.animeId == after.id && it.message == notification.message }
         _uiState.value = _uiState.value.copy(notifications = listOf(notification) + existing)
+        sendReleaseSystemNotification(getApplication<Application>(), after.title, notification.message)
+    }
+
+    /** Fires both a phone notification and an in-app notification with fake data, used by the Settings "Test notification" action. */
+    fun sendTestNotification() {
+        val title = "Test Anime"
+        val message = "Episode 1 just aired \u2014 this is a test notification."
+        val notification = UiNotification(
+            id = System.currentTimeMillis(),
+            animeId = -1,
+            title = title,
+            message = message,
+            timestamp = System.currentTimeMillis()
+        )
+        _uiState.value = _uiState.value.copy(notifications = listOf(notification) + _uiState.value.notifications)
+        sendReleaseSystemNotification(getApplication<Application>(), title, message)
+    }
+
+    fun togglePin(entry: AnimeEntry) = viewModelScope.launch { repo.setPinned(entry.id, !entry.isPinned) }
+
+    fun startRewatch(id: Int) = viewModelScope.launch { repo.startRewatch(id) }
+    fun stopRewatch(id: Int) = viewModelScope.launch { repo.stopRewatch(id) }
+
+    fun enterSelectionMode(initialId: Int) {
+        _uiState.value = _uiState.value.copy(isSelectionMode = true, selectedIds = setOf(initialId))
+    }
+
+    fun toggleSelection(id: Int) {
+        val current = _uiState.value.selectedIds
+        val updated = if (current.contains(id)) current - id else current + id
+        _uiState.value = _uiState.value.copy(selectedIds = updated)
+    }
+
+    fun exitSelectionMode() {
+        _uiState.value = _uiState.value.copy(isSelectionMode = false, selectedIds = emptySet())
+    }
+
+    fun bulkMove(status: AnimeStatus) = viewModelScope.launch {
+        val ids = _uiState.value.selectedIds.toList()
+        if (ids.isNotEmpty()) repo.moveMany(ids, status)
+        exitSelectionMode()
+    }
+
+    fun bulkDelete() = viewModelScope.launch {
+        val ids = _uiState.value.selectedIds.toList()
+        if (ids.isNotEmpty()) repo.deleteMany(ids)
+        exitSelectionMode()
     }
 
     fun clearFocus() { _uiState.value = _uiState.value.copy(focusedAnimeId = null) }
@@ -117,6 +275,16 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
     fun toggleNotifications(enabled: Boolean) = viewModelScope.launch { settings.setNotificationsEnabled(enabled) }
     fun clearAllNotifications() { _uiState.value = _uiState.value.copy(notifications = emptyList()) }
     fun removeNotification(id: Long) { _uiState.value = _uiState.value.copy(notifications = _uiState.value.notifications.filterNot { it.id == id }) }
+    fun markNotificationRead(id: Long) {
+        _uiState.value = _uiState.value.copy(
+            notifications = _uiState.value.notifications.map { if (it.id == id) it.copy(isRead = true) else it }
+        )
+    }
+    fun markAllNotificationsRead() {
+        _uiState.value = _uiState.value.copy(
+            notifications = _uiState.value.notifications.map { it.copy(isRead = true) }
+        )
+    }
     fun toggleNotificationPanel() { _uiState.value = _uiState.value.copy(isNotificationPanelOpen = !_uiState.value.isNotificationPanelOpen) }
 
     class Factory(private val application: Application) : ViewModelProvider.Factory {
