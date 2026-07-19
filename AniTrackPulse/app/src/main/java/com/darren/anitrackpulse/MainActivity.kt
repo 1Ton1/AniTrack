@@ -427,6 +427,7 @@ fun AnimeCard(entry: AnimeEntry, onIncrementCapped: (Int) -> Unit, onDelete: () 
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(entry.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("Watched ${entry.watchedEpisodes}${entry.totalEpisodes?.let { " / $it" } ?: ""}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(remainingEpisodesLabel(entry), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     Text(entry.nextAiringAt?.let { "Episode ${entry.nextEpisode ?: "?"} airs ${formatAiring(it)}" } ?: "No airing date available", color = MaterialTheme.colorScheme.primary)
                 }
             }
@@ -442,6 +443,12 @@ fun AnimeCard(entry: AnimeEntry, onIncrementCapped: (Int) -> Unit, onDelete: () 
             }
         }
     }
+}
+
+fun remainingEpisodesLabel(entry: AnimeEntry): String {
+    val total = entry.totalEpisodes ?: return "Total episodes unknown"
+    val remaining = (total - entry.watchedEpisodes).coerceAtLeast(0)
+    return if (remaining == 0) "All caught up" else "$remaining episode${if (remaining == 1) "" else "s"} remaining"
 }
 
 @Composable
