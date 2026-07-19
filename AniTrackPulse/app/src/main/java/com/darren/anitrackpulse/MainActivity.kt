@@ -1,6 +1,9 @@
 package com.darren.anitrackpulse
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -45,6 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -356,6 +361,15 @@ fun SettingsScreen(uiState: AniTrackUiState, vm: AniTrackViewModel) {
                     vm.refreshAll()
                     Toast.makeText(context, "Refresh started", Toast.LENGTH_SHORT).show()
                 }) { Text("Check for releases now") }
+                OutlinedButton(onClick = {
+                    vm.sendTestNotification()
+                    Toast.makeText(context, "Test notification sent", Toast.LENGTH_SHORT).show()
+                }) { Text("Send test release notification") }
+                Text(
+                    "Sends a sample \"new episode\" alert as both a phone notification and an in-app notification, so you can confirm both are working.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp
+                )
             }
         }
     }
@@ -636,4 +650,35 @@ fun dayChipLabel(date: LocalDate, today: LocalDate): String = if (date == today)
 fun selectedDayTitle(date: LocalDate, today: LocalDate): String {
     val dayName = if (date == today) "Today" else date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
     return "$dayName • ${date.format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()))}"
+}
+
+private const val RELEASE_NOTIFICATION_CHANNEL_ID = "anime_releases"
+
+/** Posts a real phone/system notification for an anime episode release. Used by the live release check and by the Settings test action. */
+fun sendReleaseSystemNotification(context: Context, animeTitle: String, message: String) {
+    if (Build.VERSION.SDK_INT >= 33) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (!granted) return
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            RELEASE_NOTIFICATION_CHANNEL_ID,
+            "Anime releases",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply { description = "Alerts when a saved anime has a new episode" }
+        manager.createNotificationChannel(channel)
+    }
+
+    val notification = NotificationCompat.Builder(context, RELEASE_NOTIFICATION_CHANNEL_ID)
+        .setSmallIcon(R.mipmap.ic_launcher)
+        .setContentTitle(animeTitle)
+        .setContentText(message)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .setAutoCancel(true)
+        .build()
+
+    NotificationManagerCompat.from(context).notify((animeTitle + message).hashCode(), notification)
 }

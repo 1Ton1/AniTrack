@@ -12,6 +12,7 @@ import com.darren.anitrackpulse.network.AniListApi
 import com.darren.anitrackpulse.network.AnimeDetails
 import com.darren.anitrackpulse.network.AnimeSearchResult
 import com.darren.anitrackpulse.repo.AnimeRepository
+import com.darren.anitrackpulse.sendReleaseSystemNotification
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -154,6 +155,22 @@ class AniTrackViewModel(application: Application) : AndroidViewModel(application
         )
         val existing = _uiState.value.notifications.filterNot { it.animeId == after.id && it.message == notification.message }
         _uiState.value = _uiState.value.copy(notifications = listOf(notification) + existing)
+        sendReleaseSystemNotification(getApplication<Application>(), after.title, notification.message)
+    }
+
+    /** Fires both a phone notification and an in-app notification with fake data, used by the Settings "Test notification" action. */
+    fun sendTestNotification() {
+        val title = "Test Anime"
+        val message = "Episode 1 just aired \u2014 this is a test notification."
+        val notification = UiNotification(
+            id = System.currentTimeMillis(),
+            animeId = -1,
+            title = title,
+            message = message,
+            timestamp = System.currentTimeMillis()
+        )
+        _uiState.value = _uiState.value.copy(notifications = listOf(notification) + _uiState.value.notifications)
+        sendReleaseSystemNotification(getApplication<Application>(), title, message)
     }
 
     fun clearFocus() { _uiState.value = _uiState.value.copy(focusedAnimeId = null) }
