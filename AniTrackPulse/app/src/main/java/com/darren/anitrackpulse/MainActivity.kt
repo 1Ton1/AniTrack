@@ -165,18 +165,21 @@ fun AniTrackRoot(uiState: AniTrackUiState, vm: AniTrackViewModel) {
 
 @Composable
 fun NotificationIcon(hasUnread: Boolean, count: Int, onClick: () -> Unit) {
-    Box(modifier = Modifier.padding(end = 8.dp).size(36.dp), contentAlignment = Alignment.Center) {
-        IconButton(onClick = onClick) {
+    IconButton(onClick = onClick, modifier = Modifier.padding(end = 4.dp)) {
+        BadgedBox(
+            badge = {
+                if (count > 0) {
+                    Badge(containerColor = MaterialTheme.colorScheme.error, contentColor = Color.White) {
+                        Text(if (count > 9) "9+" else count.toString(), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        ) {
             Icon(
                 if (hasUnread) Icons.Default.NotificationsActive else Icons.Default.Notifications,
                 contentDescription = "Notifications",
                 tint = if (hasUnread) MaterialTheme.colorScheme.primary else LocalContentColor.current
             )
-        }
-        if (count > 0) {
-            Box(modifier = Modifier.align(Alignment.TopEnd).size(16.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.error), contentAlignment = Alignment.Center) {
-                Text(if (count > 9) "9+" else count.toString(), color = Color.White, fontSize = 10.sp)
-            }
         }
     }
 }
