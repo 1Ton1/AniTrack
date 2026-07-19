@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -60,9 +59,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             val vm: AniTrackViewModel = viewModel(factory = AniTrackViewModel.Factory(application))
             val uiState by vm.uiState.collectAsState()
-            LaunchedEffect(uiState.darkMode) {
-                AppCompatDelegate.setDefaultNightMode(if (uiState.darkMode) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO)
-            }
             AniTrackPulseTheme(darkTheme = uiState.darkMode) { AniTrackRoot(uiState, vm) }
         }
     }
