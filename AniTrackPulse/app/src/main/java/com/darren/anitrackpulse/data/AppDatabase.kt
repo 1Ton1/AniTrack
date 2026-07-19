@@ -29,7 +29,14 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "anitrackpulse.db"
-                ).addMigrations(MIGRATION_2_3).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_2_3)
+                    // Safety net: if a device's local DB is on a version older than 2 (e.g. a very
+                    // early test install) there is no explicit migration path recorded for it, and
+                    // Room throws IllegalStateException on startup instead of crashing the app.
+                    // Rebuilding the local tables in that rare case is an acceptable trade-off for a
+                    // solo dev/test app.
+                    .fallbackToDestructiveMigration()
+                    .build().also { INSTANCE = it }
             }
         }
     }
