@@ -368,7 +368,19 @@ fun SearchResultCard(result: AnimeSearchResult, alreadyAdded: Boolean, onOpenDet
         Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
             PosterImage(result.coverImage)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(result.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(result.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    if (result.isOngoing) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.primary)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text("Ongoing", color = MaterialTheme.colorScheme.onPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 Text("Episodes: ${result.totalEpisodes ?: "Unknown"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Box {

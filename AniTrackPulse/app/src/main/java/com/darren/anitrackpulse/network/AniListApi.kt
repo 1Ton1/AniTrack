@@ -19,6 +19,7 @@ class AniListApi {
                   id
                   title { romaji english }
                   episodes
+                  status
                   coverImage { large }
                   nextAiringEpisode { episode airingAt }
                 }
@@ -40,6 +41,7 @@ class AniListApi {
                 id
                 title { romaji english }
                 episodes
+                status
                 coverImage { large }
                 nextAiringEpisode { episode airingAt }
               }
@@ -104,7 +106,8 @@ class AniListApi {
             coverImage = media.optJSONObject("coverImage")?.optStringOrNull("large"),
             totalEpisodes = media.optIntOrNull("episodes"),
             nextEpisode = nextAiring?.optIntOrNull("episode"),
-            nextAiringAt = nextAiring?.optLongOrNull("airingAt")
+            nextAiringAt = nextAiring?.optLongOrNull("airingAt"),
+            status = media.optStringOrNull("status")
         )
     }
 
